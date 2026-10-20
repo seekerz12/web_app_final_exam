@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { connectToDatabase } from '@/lib/mongodb'; // adjust path to match your mongodb helper if needed
+import { getDb } from '@/lib/mongodb';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -9,7 +9,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
-// Handle browser CORS preflight check
+// Handle browser preflight CORS
 export async function OPTIONS() {
   return new NextResponse(null, {
     status: 200,
@@ -17,7 +17,7 @@ export async function OPTIONS() {
   });
 }
 
-// Handle login POST request
+// Handle login POST
 export async function POST(request) {
   try {
     const body = await request.json();
@@ -30,9 +30,7 @@ export async function POST(request) {
       );
     }
 
-    const { db } = await connectToDatabase();
-    
-    // Check by username or email
+    const db = await getDb();
     const user = await db.collection('users').findOne({
       $or: [{ username: username }, { email: username }],
     });
