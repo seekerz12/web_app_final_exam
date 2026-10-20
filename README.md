@@ -1,29 +1,29 @@
 # How to Test the App
 
-## Student Information
+teacher1, teacher2, teacher3
+student1, student2, student3
+password123
 
-- **Student Name:**
-- **Student ID:**
+System Architecture & Key Features
+Role-Based Access Control (RBAC)
+Teacher:
 
-## Test Credentials
+View only courses authored by the logged-in instructor.
 
-- **Username / Email:**
-- **Password:**
+Create new course offerings with metadata (name, duration, topics, price, max capacity, status).
 
-## Prerequisites
+Edit existing course metadata and lifecycle status (Open, Close, Cancel).
 
--
+View detailed roster of enrolled students (name, email, enrollment timestamp).
 
-## How to Run & Test
+Delete courses (strictly guarded by business logic).
 
-### 1. Backend Setup (`next-backend/`)
+Student:
 
--
+Browse available course offerings (Cancel courses are hidden).
 
-### 2. Frontend Setup (`react-frontend/`)
+Search and filter catalog dynamically by course title, teacher name, or topics.
 
--
+Single-click enrollment with duplicate protection and capacity caps.
 
-### 3. Testing Walkthrough
-
--
+Dedicated "My Enrollments" dashboard.
