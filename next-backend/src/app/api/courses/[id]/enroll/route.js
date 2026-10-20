@@ -4,64 +4,65 @@ import { getDb } from "@/lib/mongodb";
 import { verifyJWT, withCors } from "@/lib/auth";
 import corsHeaders from "@/lib/cors";
 
+function parseCourseId(rawId) {
+  if (!rawId) return null;
+  const clean = String(rawId).trim();
+  if (!ObjectId.isValid(clean)) return null;
+  return new ObjectId(clean);
+}
+
 export async function OPTIONS() {
   return NextResponse.json({}, { status: 200, headers: corsHeaders });
 }
 
-export async function POST(req, context) {
-  const user = verifyJWT(req);
-  if (!user) {
-    return withCors({ message: "Unauthorized: Please log in" }, 401);
-  }
-  if (user.role !== "Student") {
-    return withCors({ message: "Forbidden: Only students can enroll" }, 403);
-  }
+export async function POST(request, { params }) {
+  const user = verifyJWT(request);
+  if (!user) return withCors({ message: "Unauthorized: Please log in" }, 401);
+  if (user.role !== "Student") return withCors({ message: "Forbidden: Only students can enroll" }, 403);
+
+  const { id } = await params;
+  const courseObjectId = parseCourseId(id);
+  if (!courseObjectId) return withCors({ message: "Invalid course ID" }, 400);
 
   try {
-    const params = await context?.params;
-    const id = params?.id;
-
-    if (!id || !/^[0-9a-fA-F]{24}$/.test(id)) {
-      return withCors({ message: "Invalid Course ID" }, 400);
-    }
-
     const db = await getDb();
-    const course = await db.collection("courses").findOne({ _id: new ObjectId(id) });
-
-    if (!course) {
-      return withCors({ message: "Course not found" }, 404);
-    }
+    const course = await db.collection("courses").findOne({ _id: courseObjectId });
+    if (!course) return withCors({ message: "Course not found" }, 404);
 
     if (course.status !== "Open") {
-      return withCors({ message: "Enrollment is only allowed for Open courses" }, 400);
+      return withCors({ message: `Cannot enroll: Course status is ${course.status}` }, 400);
     }
 
     const enrolledList = course.enrolledStudents || [];
-    if (enrolledList.length >= Number(course.maxStudent)) {
-      return withCors({ message: "Course is full" }, 400);
-    }
+    const currentUserId = String(user.userId || user.id);
 
-    const alreadyEnrolled = enrolledList.some((s) => s.studentId === user.id);
-    if (alreadyEnrolled) {
+    // Check duplicate enrollment
+    const isEnrolled = enrolledList.some(
+      (s) => String(s.studentId) === currentUserId || s.studentName === user.username
+    );
+    if (isEnrolled) {
       return withCors({ message: "You are already enrolled in this course" }, 400);
     }
 
+    // Check capacity
+    if (enrolledList.length >= Number(course.maxStudent)) {
+      return withCors({ message: "Course has reached maximum student capacity" }, 400);
+    }
+
+    const enrollmentRecord = {
+      studentId: currentUserId,
+      studentName: user.username,
+      studentEmail: user.email || "",
+      enrolledAt: new Date(),
+    };
+
     await db.collection("courses").updateOne(
-      { _id: new ObjectId(id) },
-      {
-        $push: {
-          enrolledStudents: {
-            studentId: user.id,
-            username: user.username,
-            email: user.email,
-            enrolledAt: new Date(),
-          },
-        },
-      }
+      { _id: courseObjectId },
+      { $push: { enrolledStudents: enrollmentRecord } }
     );
 
-    return withCors({ message: "Enrolled successfully", courseId: id }, 200);
-  } catch (err) {
-    return withCors({ message: err.message }, 500);
+    return withCors({ message: "Enrolled successfully" }, 200);
+  } catch (error) {
+    return withCors({ message: error.message }, 500);
   }
 }

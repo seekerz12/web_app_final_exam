@@ -4,159 +4,99 @@ import { getDb } from "@/lib/mongodb";
 import { verifyJWT, withCors } from "@/lib/auth";
 import corsHeaders from "@/lib/cors";
 
-// Helper to construct a query supporting both ObjectId and fallback string IDs
-function buildCourseQuery(rawId) {
+function parseCourseId(rawId) {
   if (!rawId) return null;
-  const cleanId = String(rawId).trim();
-
-  // If it's a valid 24-char hex string, query by ObjectId first, fallback to string
-  if (/^[0-9a-fA-F]{24}$/.test(cleanId) && ObjectId.isValid(cleanId)) {
-    return {
-      $or: [{ _id: new ObjectId(cleanId) }, { _id: cleanId }],
-    };
-  }
-
-  // If it's another format (e.g., seeded string ID), query directly as string
-  return { _id: cleanId };
+  const clean = String(rawId).trim();
+  if (!ObjectId.isValid(clean)) return null;
+  return new ObjectId(clean);
 }
 
 export async function OPTIONS() {
   return NextResponse.json({}, { status: 200, headers: corsHeaders });
 }
 
-// --- GET Course Details ---
-export async function GET(req, context) {
-  const user = verifyJWT(req);
-  if (!user) {
-    return withCors({ message: "Unauthorized: Please log in" }, 401);
-  }
+export async function GET(request, { params }) {
+  const user = verifyJWT(request);
+  if (!user) return withCors({ message: "Unauthorized" }, 401);
+
+  const { id } = await params;
+  const courseObjectId = parseCourseId(id);
+  if (!courseObjectId) return withCors({ message: "Invalid course ID" }, 400);
 
   try {
-    const params = await context?.params;
-    const rawId = params?.id?.trim();
-
-    if (!rawId || rawId === "new" || rawId === "undefined") {
-      return withCors({ message: `Invalid Course ID: "${rawId}"` }, 400);
-    }
-
-    const query = buildCourseQuery(rawId);
     const db = await getDb();
-    const course = await db.collection("courses").findOne(query);
+    const course = await db.collection("courses").findOne({ _id: courseObjectId });
+    if (!course) return withCors({ message: "Course not found" }, 404);
 
-    if (!course) {
-      return withCors({ message: "Course not found" }, 404);
-    }
-
-    return withCors(
-      {
-        ...course,
-        _id: course._id.toString(),
-      },
-      200
-    );
-  } catch (err) {
-    return withCors({ message: err.message }, 500);
+    return withCors(course, 200);
+  } catch (error) {
+    return withCors({ message: error.message }, 500);
   }
 }
 
-// --- PUT Update Course ---
-export async function PUT(req, context) {
-  const user = verifyJWT(req);
-  if (!user) {
-    return withCors({ message: "Unauthorized: Please log in" }, 401);
-  }
-  if (user.role !== "Teacher") {
-    return withCors({ message: "Forbidden: Only Teachers can update courses" }, 403);
-  }
+export async function PUT(request, { params }) {
+  const user = verifyJWT(request);
+  if (!user) return withCors({ message: "Unauthorized" }, 401);
+  if (user.role !== "Teacher") return withCors({ message: "Forbidden" }, 403);
+
+  const { id } = await params;
+  const courseObjectId = parseCourseId(id);
+  if (!courseObjectId) return withCors({ message: "Invalid course ID" }, 400);
 
   try {
-    const params = await context?.params;
-    const rawId = params?.id?.trim();
-
-    if (!rawId || rawId === "new" || rawId === "undefined") {
-      return withCors({ message: `Invalid Course ID: "${rawId}"` }, 400);
-    }
-
-    const query = buildCourseQuery(rawId);
+    const body = await request.json();
     const db = await getDb();
-    const coursesCollection = db.collection("courses");
 
-    const course = await coursesCollection.findOne(query);
-    if (!course) {
-      return withCors({ message: "Course not found" }, 404);
-    }
+    const course = await db.collection("courses").findOne({ _id: courseObjectId });
+    if (!course) return withCors({ message: "Course not found" }, 404);
 
-    // Ownership check using string comparison to avoid ObjectId/string mismatch
-    if (String(course.teacherId) !== String(user.id)) {
-      return withCors({ message: "Forbidden: You can only edit your own courses" }, 403);
-    }
+    // Verify ownership
+    const isOwner =
+      String(course.teacherId) === String(user.userId || user.id) ||
+      course.teacherName === user.username;
+    if (!isOwner) return withCors({ message: "Forbidden: Not your course" }, 403);
 
-    const body = await req.json();
-    const { courseName, duration, topics, price, maxStudent, status } = body;
-    const updateDoc = {};
+    const updateDoc = {
+      courseName: body.courseName ? String(body.courseName).trim() : course.courseName,
+      duration: body.duration !== undefined ? Number(body.duration) : course.duration,
+      price: body.price !== undefined ? Number(body.price) : course.price,
+      maxStudent: body.maxStudent !== undefined ? Number(body.maxStudent) : course.maxStudent,
+      topics: body.topics
+        ? Array.isArray(body.topics)
+          ? body.topics
+          : String(body.topics).split(",").map((t) => t.trim()).filter(Boolean)
+        : course.topics,
+      status: body.status || course.status,
+      updatedAt: new Date(),
+    };
 
-    if (courseName !== undefined) updateDoc.courseName = String(courseName).trim();
-    if (duration !== undefined) updateDoc.duration = Number(duration);
-    if (price !== undefined) updateDoc.price = Number(price);
-    if (maxStudent !== undefined) updateDoc.maxStudent = Number(maxStudent);
-
-    if (topics !== undefined) {
-      updateDoc.topics = Array.isArray(topics)
-        ? topics.map((t) => String(t).trim()).filter(Boolean)
-        : String(topics)
-            .split(",")
-            .map((t) => t.trim())
-            .filter(Boolean);
-    }
-
-    if (status !== undefined) {
-      const allowed = ["Open", "Close", "Cancel"];
-      updateDoc.status = allowed.includes(status) ? status : course.status;
-    }
-
-    updateDoc.updatedAt = new Date();
-
-    await coursesCollection.updateOne(query, { $set: updateDoc });
-
+    await db.collection("courses").updateOne({ _id: courseObjectId }, { $set: updateDoc });
     return withCors({ message: "Course updated successfully" }, 200);
-  } catch (err) {
-    return withCors({ message: err.message }, 500);
+  } catch (error) {
+    return withCors({ message: error.message }, 500);
   }
 }
 
-// --- DELETE Course ---
-export async function DELETE(req, context) {
-  const user = verifyJWT(req);
-  if (!user) {
-    return withCors({ message: "Unauthorized: Please log in" }, 401);
-  }
-  if (user.role !== "Teacher") {
-    return withCors({ message: "Forbidden: Only Teachers can delete courses" }, 403);
-  }
+export async function DELETE(request, { params }) {
+  const user = verifyJWT(request);
+  if (!user) return withCors({ message: "Unauthorized" }, 401);
+  if (user.role !== "Teacher") return withCors({ message: "Forbidden" }, 403);
+
+  const { id } = await params;
+  const courseObjectId = parseCourseId(id);
+  if (!courseObjectId) return withCors({ message: "Invalid course ID" }, 400);
 
   try {
-    const params = await context?.params;
-    const rawId = params?.id?.trim();
-
-    if (!rawId || rawId === "new" || rawId === "undefined") {
-      return withCors({ message: `Invalid Course ID: "${rawId}"` }, 400);
-    }
-
-    const query = buildCourseQuery(rawId);
     const db = await getDb();
-    const coursesCollection = db.collection("courses");
+    const course = await db.collection("courses").findOne({ _id: courseObjectId });
+    if (!course) return withCors({ message: "Course not found" }, 404);
 
-    const course = await coursesCollection.findOne(query);
-    if (!course) {
-      return withCors({ message: "Course not found" }, 404);
-    }
+    const isOwner =
+      String(course.teacherId) === String(user.userId || user.id) ||
+      course.teacherName === user.username;
+    if (!isOwner) return withCors({ message: "Forbidden: Not your course" }, 403);
 
-    // Ownership check using string comparison
-    if (String(course.teacherId) !== String(user.id)) {
-      return withCors({ message: "Forbidden: You can only delete your own courses" }, 403);
-    }
-
-    // Prevent deletion if students have enrolled
+    // Business rule: Deletion blocked if any student is enrolled
     if (course.enrolledStudents && course.enrolledStudents.length > 0) {
       return withCors(
         { message: "Cannot delete course: Students are currently enrolled." },
@@ -164,10 +104,9 @@ export async function DELETE(req, context) {
       );
     }
 
-    await coursesCollection.deleteOne(query);
-
+    await db.collection("courses").deleteOne({ _id: courseObjectId });
     return withCors({ message: "Course deleted successfully" }, 200);
-  } catch (err) {
-    return withCors({ message: err.message }, 500);
+  } catch (error) {
+    return withCors({ message: error.message }, 500);
   }
 }
