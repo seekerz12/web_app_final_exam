@@ -1,80 +1,84 @@
-import { NextResponse } from "next/server";
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-import { getDb } from "@/lib/mongodb";
-import corsHeaders from "@/lib/cors";
+import { NextResponse } from 'next/server';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { connectToDatabase } from '@/lib/mongodb'; // adjust path to match your mongodb helper if needed
 
-const JWT_SECRET = process.env.JWT_SECRET || "wad_final_exam_secret_2026";
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
 
+// Handle browser CORS preflight check
 export async function OPTIONS() {
-  return NextResponse.json({}, { status: 200, headers: corsHeaders });
+  return new NextResponse(null, {
+    status: 200,
+    headers: corsHeaders,
+  });
 }
 
-export async function POST(req) {
+// Handle login POST request
+export async function POST(request) {
   try {
-    const body = await req.json();
-    const { username, email, password } = body;
-    const identifier = username || email;
+    const body = await request.json();
+    const { username, password } = body;
 
-    if (!identifier || !password) {
+    if (!username || !password) {
       return NextResponse.json(
-        { message: "Username/Email and Password are required." },
+        { message: 'Username and password are required' },
         { status: 400, headers: corsHeaders }
       );
     }
 
-    const db = await getDb();
+    const { db } = await connectToDatabase();
     
-    // Direct lookup without inline auto-seed
-    const user = await db.collection("users").findOne({
-      $or: [{ username: identifier }, { email: identifier }],
+    // Check by username or email
+    const user = await db.collection('users').findOne({
+      $or: [{ username: username }, { email: username }],
     });
 
     if (!user) {
       return NextResponse.json(
-        { message: "User not found. Check credentials or run /api/seed." },
+        { message: 'Invalid credentials' },
         { status: 401, headers: corsHeaders }
       );
     }
 
-    const isMatch =
-      (await bcrypt.compare(password, user.password).catch(() => false)) ||
-      password === user.password;
-
+    const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return NextResponse.json(
-        { message: "Incorrect password." },
+        { message: 'Invalid credentials' },
         { status: 401, headers: corsHeaders }
       );
     }
 
     const token = jwt.sign(
       {
-        id: user._id.toString(),
+        userId: user._id.toString(),
         username: user.username,
-        email: user.email,
         role: user.role,
+        email: user.email,
       },
-      JWT_SECRET,
-      { expiresIn: "7d" }
+      process.env.JWT_SECRET || 'fallback_secret',
+      { expiresIn: '1d' }
     );
 
     return NextResponse.json(
       {
-        message: "Login successful",
         token,
         user: {
           id: user._id.toString(),
           username: user.username,
-          email: user.email,
           role: user.role,
+          email: user.email,
         },
       },
       { status: 200, headers: corsHeaders }
     );
-  } catch (err) {
+  } catch (error) {
+    console.error('Login error:', error);
     return NextResponse.json(
-      { message: err.message || "Database connection error" },
+      { message: error.message || 'Internal Server Error' },
       { status: 500, headers: corsHeaders }
     );
   }
