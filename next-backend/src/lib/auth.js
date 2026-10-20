@@ -2,6 +2,14 @@ import jwt from "jsonwebtoken";
 import { NextResponse } from "next/server";
 import corsHeaders from "./cors";
 
+export function signToken(payload, options = { expiresIn: "1d" }) {
+  return jwt.sign(
+    payload,
+    process.env.JWT_SECRET || "fallback_secret",
+    options
+  );
+}
+
 export function verifyJWT(request) {
   try {
     const authHeader = request.headers.get("authorization") || "";
