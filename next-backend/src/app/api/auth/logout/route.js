@@ -1,5 +1,15 @@
-//src/app/api/auth/logout/route.js
+import { NextResponse } from "next/server";
+import corsHeaders from "@/lib/cors";
 
-/**
- * Your logout codes goes here
- */
+export async function OPTIONS() {
+  return new Response(null, { status: 200, headers: corsHeaders });
+}
+
+export async function POST() {
+  const response = NextResponse.json(
+    { message: "Logged out successfully" },
+    { status: 200, headers: corsHeaders }
+  );
+  response.cookies.set("token", "", { maxAge: 0, path: "/" });
+  return response;
+}
