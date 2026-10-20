@@ -33,4 +33,8 @@ export async function getDb() {
   return connectedClient.db(process.env.DB_NAME || "wad-final-2026");
 }
 
+export async function connectToDatabase() {
+  const db = await getDb();
+  return { db };
+}
 export default clientPromise;
